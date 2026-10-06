@@ -232,9 +232,9 @@
   const VH = 360;
   const SEG = 16;                 // 地形每一段的寬度
   const PX_PER_M = 12;            // 多少單位算 1 公尺
-  const GRAVITY = 980;            // 放開時往下的加速度
-  const LIFT = 2050;              // 按住時往上的推力（會抵掉重力）
-  const MAX_UP = -330, MAX_DOWN = 380;
+  const GRAVITY = 620;            // 放開時往下的加速度
+  const LIFT = 1300;               // 按住時往上的推力（會抵掉重力）
+  const MAX_UP = -230, MAX_DOWN = 260;  // 上升、下降的最高速度
 
   const cvs = document.getElementById('game');
   const ctx = cvs.getContext('2d');
