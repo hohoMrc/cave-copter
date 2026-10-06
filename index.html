@@ -91,6 +91,33 @@
   }
   canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: pointer; }
 
+  /* 目前生效中的道具 */
+  .effects {
+    position: absolute; left: 12px; top: 10px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    pointer-events: none;
+  }
+  .chip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 10px 3px 6px;
+    border-radius: 999px;
+    background: #15110fcc;
+    border: 1px solid var(--c);
+    font-size: 0.75rem; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 6px var(--c); }
+  .chip b { font-family: var(--font-gauge); color: var(--c); }
+
+  /* 標題畫面的道具說明 */
+  .items {
+    display: grid; grid-template-columns: auto auto 1fr; gap: 6px 10px;
+    align-items: center; text-align: left; font-size: 0.85rem;
+  }
+  .items i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+  .items b { font-weight: 500; }
+  .items span { color: var(--dust); }
+
   .overlay {
     position: absolute; inset: 0;
     display: grid; place-items: center;
@@ -183,6 +210,7 @@
 
   <div class="stage" id="stage">
     <canvas id="game" aria-label="遊戲畫面：按住上升，放開下降"></canvas>
+    <div class="effects" id="effects"></div>
 
     <div class="overlay" id="titleScreen">
       <div class="card">
@@ -191,6 +219,11 @@
         <div class="how">
           <span><b>按住畫面</b> / <b>空白鍵</b> / <b>↑</b> 上升</span>
           <span><b>放開</b> 下降</span>
+        </div>
+        <div class="items">
+          <i style="--c:#6fe0cf"></i><b>護盾</b><span>擋下一次碰撞</span>
+          <i style="--c:#c3a6ff"></i><b>慢動作</b><span>5 秒內整個世界變慢</span>
+          <i style="--c:#ffd27a"></i><b>縮小</b><span>7 秒內機身變小，容易鑽過縫隙</span>
         </div>
         <button id="startBtn" type="button">起飛</button>
         <p class="portrait" id="portraitTip" hidden>把手機橫放，可以看到更遠的地形</p>
@@ -236,6 +269,22 @@
   const LIFT = 1300;               // 按住時往上的推力（會抵掉重力）
   const MAX_UP = -230, MAX_DOWN = 260;  // 上升、下降的最高速度
 
+  // ===== 道具 =====
+  // weight：出現機率的比重；time：效果持續秒數（護盾沒有時間限制，撞一次就消失）
+  const ITEMS = {
+    shield: { name: '護盾',   color: '#6fe0cf', weight: 4 },
+    slow:   { name: '慢動作', color: '#c3a6ff', weight: 3, time: 5 },
+    mini:   { name: '縮小',   color: '#ffd27a', weight: 3, time: 7 },
+  };
+  const SLOW_FACTOR = 0.55;       // 慢動作時世界的速度倍率
+  const MINI_SIZE = 0.6;          // 縮小時機身的大小倍率
+  function pickItemType() {
+    const total = Object.values(ITEMS).reduce((s, it) => s + it.weight, 0);
+    let r = Math.random() * total;
+    for (const [k, it] of Object.entries(ITEMS)) { if ((r -= it.weight) < 0) return k; }
+    return 'shield';
+  }
+
   const cvs = document.getElementById('game');
   const ctx = cvs.getContext('2d');
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -245,6 +294,7 @@
     title: $('titleScreen'), pause: $('pauseScreen'), over: $('overScreen'),
     finalDist: $('finalDist'), finalNote: $('finalNote'), overTitle: $('overTitle'),
     soundBtn: $('soundBtn'), pauseBtn: $('pauseBtn'), portraitTip: $('portraitTip'),
+    effects: $('effects'),
   };
 
   let W = 0, H = 0, DPR = 1, scale = 1, VW = 600, offY = 0;
@@ -302,6 +352,18 @@
     rotorNode.g.gain.setTargetAtTime(on ? (holding ? 0.05 : 0.03) : 0, t, 0.08);
     rotorNode.o.frequency.setTargetAtTime(holding ? 72 : 55, t, 0.15);
   }
+  function tone(freq, dur = 0.15, type = 'sine', vol = 0.08, slide = 0) {
+    if (!soundOn || !audio) return;
+    const t = audio.currentTime;
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), t + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(audio.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
   function crashSound() {
     if (!soundOn || !audio) return;
     const t = audio.currentTime, len = 0.7;
@@ -328,6 +390,10 @@
       segs: [], blocks: [], smoke: [], debris: [], crystals: [],
       genX: 0, center: VH / 2, cvel: 0,
       nextBlock: 700,             // 一開始先給一段沒有岩柱的暖身區
+      items: [], nextItem: 1100, popups: [],
+      shield: false,              // 有沒有護盾
+      slow: 0, mini: 0,           // 慢動作、縮小剩下的秒數
+      inv: 0,                     // 護盾破掉後短暫無敵的秒數
       shake: 0, t: 0, dead: false,
     };
     ensureTerrain();
@@ -367,12 +433,23 @@
         G.blocks.push({ x, y: by, w: 26, h });
         G.nextBlock = x + Math.max(200, rand(300, 460) - x * 0.004);
       }
+
+      // 道具：放在通道正中央，並避開岩柱附近，免得吃道具就撞上去
+      if (x >= G.nextItem) {
+        const nearBlock = G.blocks.some(b => Math.abs(b.x - x) < 90) || G.nextBlock - x < 90;
+        if (nearBlock) G.nextItem = x + SEG * 3;
+        else {
+          G.items.push({ x: x + SEG / 2, y: G.center, type: pickItemType(), p: rand(0, 6.28) });
+          G.nextItem = x + rand(1000, 1600);
+        }
+      }
       G.genX += SEG;
     }
     // 移除已經飛過的地形
     const left = G.cam - SEG * 4;
     while (G.segs.length && G.segs[0].x < left) G.segs.shift();
     G.blocks = G.blocks.filter(b => b.x + b.w > left);
+    G.items = G.items.filter(it => it.x > left && !it.taken);
     G.crystals = G.crystals.filter(c => c.x > left);
   }
 
@@ -426,10 +503,45 @@
     setTimeout(() => { if (G && G.dead && mode === 'play') setMode('over'); updateHud(); }, 700);
   }
 
+  // 吃到道具
+  function collect(it) {
+    it.taken = true;
+    const def = ITEMS[it.type];
+    if (it.type === 'shield') G.shield = true;
+    else G[it.type] = def.time;   // 再吃一次同樣的道具會把時間重新補滿
+    G.popups.push({ x: it.x, y: it.y, text: def.name + '！', color: def.color, life: 1 });
+    for (let i = 0; i < 14; i++) {
+      const a = rand(0, Math.PI * 2), v = rand(40, 140);
+      G.debris.push({ x: it.x, y: it.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 60, life: rand(0.3, 0.7), color: def.color });
+    }
+    tone(it.type === 'slow' ? 520 : 760, 0.18, 'triangle', 0.07, it.type === 'slow' ? -260 : 420);
+  }
+
+  // 護盾擋下一次碰撞
+  function breakShield(hx) {
+    G.shield = false;
+    G.inv = 1.2;
+    G.shake = 0.25;
+    for (let i = 0; i < 20; i++) {
+      const a = rand(0, Math.PI * 2), v = rand(80, 200);
+      G.debris.push({ x: hx, y: G.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(0.3, 0.6), color: ITEMS.shield.color });
+    }
+    tone(300, 0.3, 'square', 0.05, 500);
+  }
+
   // ===== 每一幀的邏輯 =====
   function update(dt) {
+    // 道具計時用真實時間；慢動作時其他東西都用放慢後的時間
+    if (!G.dead) {
+      G.slow = Math.max(0, G.slow - dt);
+      G.mini = Math.max(0, G.mini - dt);
+      G.inv = Math.max(0, G.inv - dt);
+      if (G.slow > 0) dt *= SLOW_FACTOR;
+    }
     G.t += dt;
     G.shake = Math.max(0, G.shake - dt);
+    for (const p of G.popups) { p.y -= 30 * dt; p.life -= dt; }
+    G.popups = G.popups.filter(p => p.life > 0);
 
     // 碎片與煙霧就算墜毀後也繼續動
     for (const p of G.debris) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 600 * dt; p.vx *= 0.98; p.life -= dt; }
@@ -454,16 +566,41 @@
 
     ensureTerrain();
 
-    // 碰撞：直升機機身簡化成一個矩形（旋翼不算，比較寬容）
+    // 碰撞：直升機機身簡化成一個矩形（旋翼不算，比較寬容），縮小時矩形也跟著變小
     const hx = G.cam + heliX();
-    const L = hx - 17, R = hx + 15, T = G.y - 8, B = G.y + 10;
+    const k = G.mini > 0 ? MINI_SIZE : 1;
+    const L = hx - 17 * k, R = hx + 15 * k, T = G.y - 8 * k, B = G.y + 10 * k;
+
+    // 撿道具
+    for (const it of G.items) {
+      if (!it.taken && Math.hypot(it.x - hx, it.y - G.y) < 20) collect(it);
+    }
+
+    // 撞到洞頂、洞底
     for (const s of G.segs) {
       if (s.x + SEG < L || s.x > R) continue;
-      if (T < s.top || B > s.bot) return crash();
+      if (T < s.top || B > s.bot) {
+        if (G.inv > 0 || G.shield) {
+          // 有護盾或無敵中：把直升機推回通道裡，而不是墜毀
+          if (G.shield) breakShield(hx);
+          if (T < s.top) { G.y = s.top + 8 * k + 1; G.vy = Math.max(G.vy, 40); }
+          else { G.y = s.bot - 10 * k - 1; G.vy = Math.min(G.vy, -40); }
+        } else return crash();
+      }
     }
+    // 撞到岩柱：有護盾的話岩柱會被撞碎
     for (const b of G.blocks) {
-      if (b.x < R && b.x + b.w > L && b.y < B && b.y + b.h > T) return crash();
+      if (b.broken || !(b.x < R && b.x + b.w > L && b.y < B && b.y + b.h > T)) continue;
+      if (G.inv > 0) continue;
+      if (G.shield) {
+        breakShield(hx);
+        b.broken = true;
+        for (let i = 0; i < 24; i++) {
+          G.debris.push({ x: b.x + rand(0, b.w), y: b.y + rand(0, b.h), vx: rand(0, 200), vy: rand(-150, 50), life: rand(0.5, 1), color: '#5a4738' });
+        }
+      } else return crash();
     }
+    G.blocks = G.blocks.filter(b => !b.broken);
   }
 
   // ===== 繪圖 =====
@@ -543,10 +680,40 @@
     }
   }
 
-  function drawHeli(x, y, vy, t) {
+  // 道具外觀：發光的圓，裡面畫各自的符號
+  function drawItem(it, cam, t) {
+    const def = ITEMS[it.type];
+    const x = it.x - cam, y = it.y + Math.sin(t * 3 + it.p) * 4;
+    if (x < -30 || x > VW + 30) return;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.shadowColor = def.color; ctx.shadowBlur = 14;
+    ctx.strokeStyle = def.color; ctx.lineWidth = 2;
+    ctx.fillStyle = '#15110fcc';
+    ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = def.color; ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    if (it.type === 'shield') {
+      // 盾牌
+      ctx.moveTo(0, -6); ctx.lineTo(5, -4); ctx.lineTo(4, 2); ctx.lineTo(0, 6); ctx.lineTo(-4, 2); ctx.lineTo(-5, -4); ctx.closePath(); ctx.fill();
+    } else if (it.type === 'slow') {
+      // 時鐘
+      ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.moveTo(0, 0); ctx.lineTo(0, -4); ctx.moveTo(0, 0); ctx.lineTo(3, 1); ctx.stroke();
+    } else {
+      // 往內縮的箭頭
+      ctx.moveTo(-6, -6); ctx.lineTo(-1.5, -1.5); ctx.moveTo(6, 6); ctx.lineTo(1.5, 1.5);
+      ctx.moveTo(-1.5, -5); ctx.lineTo(-1.5, -1.5); ctx.lineTo(-5, -1.5);
+      ctx.moveTo(1.5, 5); ctx.lineTo(1.5, 1.5); ctx.lineTo(5, 1.5); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawHeli(x, y, vy, t, size = 1) {
     const tilt = clamp(vy / 900, -0.28, 0.32);
     ctx.save();
     ctx.translate(x, y);
+    ctx.scale(size, size);
     ctx.rotate(tilt);
 
     // 尾桁
@@ -604,15 +771,49 @@
     drawWalls(cam);
     drawCrystals(cam);
 
-    if (!G.dead) drawHeli(heliX(), G.y, G.vy, G.t || performance.now() / 1000);
+    const t = G.t || performance.now() / 1000;
+    for (const it of G.items) if (!it.taken) drawItem(it, cam, t);
 
-    // 爆炸碎片
+    if (!G.dead) {
+      const size = G.mini > 0 ? (G.mini < 1 ? MINI_SIZE + (1 - MINI_SIZE) * (1 - G.mini) : MINI_SIZE) : 1;
+      // 護盾破掉後的無敵時間：機身閃爍
+      const blink = G.inv > 0 && Math.floor(G.inv * 14) % 2 === 0;
+      if (!blink) drawHeli(heliX(), G.y, G.vy, t, size);
+      if (G.shield) {
+        const pulse = 0.55 + Math.sin(t * 6) * 0.2;
+        ctx.save();
+        ctx.strokeStyle = ITEMS.shield.color;
+        ctx.globalAlpha = pulse;
+        ctx.lineWidth = 2;
+        ctx.shadowColor = ITEMS.shield.color; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(heliX(), G.y - 1, 26 * size, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // 碎片（爆炸、道具、岩柱）
     for (const p of G.debris) {
       ctx.globalAlpha = clamp(p.life, 0, 1);
-      ctx.fillStyle = p.hot ? (p.life > 0.7 ? '#ffd27a' : '#ff9a2e') : '#5a4738';
+      ctx.fillStyle = p.color || (p.hot ? (p.life > 0.7 ? '#ffd27a' : '#ff9a2e') : '#5a4738');
       ctx.fillRect(p.x - cam - 2, p.y - 2, 4, 4);
     }
     ctx.globalAlpha = 1;
+
+    // 吃到道具時浮起的文字
+    ctx.font = '700 14px "Noto Sans TC", sans-serif';
+    ctx.textAlign = 'center';
+    for (const p of G.popups) {
+      ctx.globalAlpha = clamp(p.life * 1.5, 0, 1);
+      ctx.fillStyle = p.color;
+      ctx.fillText(p.text, p.x - cam, p.y - 18);
+    }
+    ctx.globalAlpha = 1;
+
+    // 慢動作時畫面蒙上一層淡紫
+    if (G.slow > 0) {
+      ctx.fillStyle = `rgba(150,120,255,${Math.min(0.12, G.slow * 0.1)})`;
+      ctx.fillRect(0, -offY - 10, VW, VH + offY * 2 + 20);
+    }
   }
 
   // ===== HUD =====
@@ -625,6 +826,16 @@
     const kmh = G.dead ? 0 : Math.round(G.speed / PX_PER_M * 3.6 * 4);
     setHtml(ui.speed, 'speed', `${kmh}<small>km/h</small>`);
     setHtml(ui.best, 'best', `${Math.max(best, meters()).toLocaleString()}<small>m</small>`);
+
+    // 生效中的道具：顯示名稱與剩餘秒數
+    const chips = [];
+    if (!G.dead) {
+      if (G.shield) chips.push(['shield', '']);
+      if (G.slow > 0) chips.push(['slow', G.slow.toFixed(1) + 's']);
+      if (G.mini > 0) chips.push(['mini', G.mini.toFixed(1) + 's']);
+    }
+    setHtml(ui.effects, 'effects', chips.map(([k, v]) =>
+      `<span class="chip" style="--c:${ITEMS[k].color}"><i></i>${ITEMS[k].name}${v ? ` <b>${v}</b>` : ''}</span>`).join(''));
   }
 
   // ===== 主迴圈 =====
