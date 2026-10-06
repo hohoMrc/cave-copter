@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>穿岩直升機</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,6 +23,8 @@
   }
   html, body { height: 100%; margin: 0; }
   [hidden] { display: none !important; }   /* 標了 hidden 的元素一定隱藏，避免被 .overlay 的 display 蓋掉 */
+  html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; }  /* 關掉手機「點兩下放大」 */
+  .stage { touch-action: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
   body {
     background: var(--rock);
     color: var(--ink);
@@ -897,6 +899,10 @@
     ui.soundBtn.textContent = '音效：' + (soundOn ? '開' : '關');
     rotorUpdate();
   });
+
+  // 手機上擋掉縮放手勢（iOS Safari 會無視部分 CSS 設定）
+  document.addEventListener("gesturestart", e => e.preventDefault());
+  document.addEventListener("dblclick", e => e.preventDefault(), { passive: false });
 
   // ===== 啟動 =====
   function start(data) {
