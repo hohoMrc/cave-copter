@@ -21,7 +21,8 @@
     --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
     color-scheme: dark;
   }
-  html, body { height: 100%; }
+  html, body { height: 100%; margin: 0; }
+  [hidden] { display: none !important; }   /* 標了 hidden 的元素一定隱藏，避免被 .overlay 的 display 蓋掉 */
   body {
     background: var(--rock);
     color: var(--ink);
