@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>穿岩直升機</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Noto+Sans+TC:wght@400;500;900&display=swap">
+<style>
+  /* 版面：像駕駛艙儀表 —— 上方一排儀表讀數，中間整片是洞穴畫面 */
+  /* 刻意只做深色單一主題：場景本身就在地底 */
+  :root {
+    --rock: #15110f;       /* 頁面底色：玄武岩 */
+    --panel: #221b17;      /* 儀表底 */
+    --ink: #efe6da;        /* 主要文字 */
+    --dust: #9a8a7a;       /* 次要文字：岩粉 */
+    --signal: #ff9a2e;     /* 直升機機身的警示橘，唯一強調色 */
+    --crystal: #6fe0cf;    /* 洞穴晶石的冷光，只用在場景裡 */
+    --font-gauge: "Chakra Petch", "SF Mono", ui-monospace, monospace;
+    --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: var(--rock);
+    color: var(--ink);
+    font-family: var(--font-body);
+    overflow: hidden;
+  }
+  .app {
+    box-sizing: border-box;
+    height: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding-inline: 16px;
+    padding-block: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+  }
+  h1 {
+    margin: 0;
+    font-weight: 900;
+    font-size: 1.6rem;
+    letter-spacing: 0.06em;
+    line-height: 1;
+  }
+  h1 em { font-style: normal; color: var(--signal); }
+  .gauges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .gauge {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 12px;
+    background: var(--panel);
+    border-radius: 6px;
+    min-width: 0;
+  }
+  .gauge span {
+    font-family: var(--font-gauge);
+    font-size: 0.62rem;
+    letter-spacing: 0.18em;
+    color: var(--dust);
+    text-transform: uppercase;
+  }
+  .gauge b {
+    font-family: var(--font-gauge);
+    font-weight: 700;
+    font-size: 1.25rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .gauge b small { font-size: 0.7em; color: var(--dust); margin-left: 2px; }
+  .gauge.best b { color: var(--signal); }
+
+  .stage {
+    position: relative;
+    flex: 1;
+    min-height: 240px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0b0908;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: pointer; }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    padding: 20px;
+    background: #0b0908b8;
+    text-align: center;
+  }
+  .card { max-width: 28rem; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+  .card h2 {
+    margin: 0;
+    font-weight: 900;
+    font-size: 2.2rem;
+    letter-spacing: 0.08em;
+    text-wrap: balance;
+  }
+  .card h2 em { font-style: normal; color: var(--signal); }
+  .card p { margin: 0; line-height: 1.7; text-wrap: pretty; }
+  .card .how {
+    display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+    font-size: 0.88rem; color: var(--dust);
+  }
+  .card .how b { color: var(--ink); font-weight: 500; }
+  .card .readout {
+    font-family: var(--font-gauge); font-weight: 700;
+    font-size: 3.4rem; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .card .readout small { font-size: 0.4em; color: var(--dust); margin-left: 4px; }
+  .card .note { font-size: 0.85rem; color: var(--dust); }
+  .card .note.new { color: var(--signal); }
+  .card .portrait { font-size: 0.8rem; color: var(--crystal); }
+
+  button {
+    font: inherit;
+    font-weight: 900;
+    font-size: 1.05rem;
+    letter-spacing: 0.12em;
+    padding: 10px 30px;
+    border-radius: 6px;
+    border: 0;
+    background: var(--signal);
+    color: var(--rock);
+    cursor: pointer;
+    transition: transform .12s, filter .12s;
+  }
+  button:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  button.ghost {
+    background: transparent; color: var(--dust);
+    border: 1px solid #3a2f28;
+    font-weight: 500; font-size: 0.78rem; letter-spacing: 0.06em;
+    padding: 6px 14px;
+  }
+  button.ghost:hover { color: var(--ink); }
+
+  footer {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 8px;
+    font-size: 0.78rem; color: var(--dust);
+  }
+  footer .btns { display: flex; gap: 8px; }
+  kbd {
+    font-family: var(--font-gauge); font-size: 0.72rem;
+    padding: 1px 6px; border: 1px solid #3a2f28; border-radius: 4px; color: var(--ink);
+  }
+
+  @media (max-width: 560px) {
+    h1 { font-size: 1.25rem; }
+    .gauge { padding: 4px 9px; }
+    .gauge b { font-size: 1rem; }
+    .card h2 { font-size: 1.7rem; }
+    .card .readout { font-size: 2.6rem; }
+    footer .keys { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <h1>穿岩<em>直升機</em></h1>
+    <div class="gauges">
+      <div class="gauge"><span>Distance</span><b id="dist">0<small>m</small></b></div>
+      <div class="gauge"><span>Speed</span><b id="speed">0<small>km/h</small></b></div>
+      <div class="gauge best"><span>Best</span><b id="best">0<small>m</small></b></div>
+    </div>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="game" aria-label="遊戲畫面：按住上升，放開下降"></canvas>
+
+    <div class="overlay" id="titleScreen">
+      <div class="card">
+        <h2>穿岩<em>直升機</em></h2>
+        <p>直升機會自己往前飛。按住讓它爬升，放開讓它下降，別碰到洞頂、洞底和岩柱。飛越遠，速度越快，洞穴也越窄。</p>
+        <div class="how">
+          <span><b>按住畫面</b> / <b>空白鍵</b> / <b>↑</b> 上升</span>
+          <span><b>放開</b> 下降</span>
+        </div>
+        <button id="startBtn" type="button">起飛</button>
+        <p class="portrait" id="portraitTip" hidden>把手機橫放，可以看到更遠的地形</p>
+      </div>
+    </div>
+
+    <div class="overlay" id="pauseScreen" hidden>
+      <div class="card">
+        <h2>暫停</h2>
+        <button id="resumeBtn" type="button">繼續飛行</button>
+        <p class="note">按 <kbd>P</kbd> 或 <kbd>Esc</kbd> 也能繼續</p>
+      </div>
+    </div>
+
+    <div class="overlay" id="overScreen" hidden>
+      <div class="card">
+        <h2 id="overTitle">墜毀</h2>
+        <div class="readout"><span id="finalDist">0</span><small>m</small></div>
+        <p class="note" id="finalNote">最高紀錄 0 m</p>
+        <button id="againBtn" type="button">再飛一次</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <span class="keys"><kbd>Space</kbd> / <kbd>↑</kbd> / <kbd>W</kbd> 按住上升　<kbd>P</kbd> 暫停</span>
+    <div class="btns">
+      <button class="ghost" id="soundBtn" type="button">音效：開</button>
+      <button class="ghost" id="pauseBtn" type="button">暫停</button>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  // ===== 畫面與座標 =====
+  // 遊戲世界用固定的「邏輯高度」360 單位，不管螢幕多大，物理手感都一樣
+  // 寬螢幕會看到更遠的地形；直立的手機上下會多出岩壁（像信箱模式）
+  const VH = 360;
+  const SEG = 16;                 // 地形每一段的寬度
+  const PX_PER_M = 12;            // 多少單位算 1 公尺
+  const GRAVITY = 980;            // 放開時往下的加速度
+  const LIFT = 2050;              // 按住時往上的推力（會抵掉重力）
+  const MAX_UP = -330, MAX_DOWN = 380;
+
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const $ = id => document.getElementById(id);
+  const ui = {
+    dist: $('dist'), speed: $('speed'), best: $('best'),
+    title: $('titleScreen'), pause: $('pauseScreen'), over: $('overScreen'),
+    finalDist: $('finalDist'), finalNote: $('finalNote'), overTitle: $('overTitle'),
+    soundBtn: $('soundBtn'), pauseBtn: $('pauseBtn'), portraitTip: $('portraitTip'),
+  };
+
+  let W = 0, H = 0, DPR = 1, scale = 1, VW = 600, offY = 0;
+  let mode = 'title';             // title | play | pause | over
+  let G = null;                   // 這一局的狀態
+  let best = 0;
+  let holding = false;
+  let soundOn = true, audio = null, rotorNode = null;
+  let overAt = 0;
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  function loadBest() { try { return Number(localStorage.getItem('copter-best')) || 0; } catch { return 0; } }
+  function saveBest(v) { try { localStorage.setItem('copter-best', String(v)); } catch {} }
+
+  // ===== 尺寸 =====
+  function resize() {
+    const r = cvs.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    cvs.width = Math.round(W * DPR); cvs.height = Math.round(H * DPR);
+    // 至少要看得到 520 單位寬，太窄的螢幕就整體縮小
+    scale = Math.min(H / VH, W / 520);
+    VW = W / scale;
+    offY = (H / scale - VH) / 2;  // 上下多出的空間（邏輯單位）
+    ui.portraitTip.hidden = !(H > W * 1.1);
+    if (G) ensureTerrain();
+    if (mode !== 'play') draw();
+  }
+  new ResizeObserver(resize).observe(cvs);
+
+  // ===== 音效：引擎聲用持續的低頻振盪器，其餘用短音 =====
+  function initAudio() {
+    if (audio) return;
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch { audio = null; }
+  }
+  function rotorStart() {
+    if (!audio || rotorNode) return;
+    const o = audio.createOscillator(), lfo = audio.createOscillator();
+    const g = audio.createGain(), lg = audio.createGain(), f = audio.createBiquadFilter();
+    o.type = 'sawtooth'; o.frequency.value = 55;
+    lfo.frequency.value = 14; lg.gain.value = 0.02;  // 讓聲音一下一下的，像旋翼拍打
+    f.type = 'lowpass'; f.frequency.value = 420;
+    g.gain.value = 0;
+    lfo.connect(lg).connect(g.gain);
+    o.connect(f).connect(g).connect(audio.destination);
+    o.start(); lfo.start();
+    rotorNode = { o, lfo, g };
+  }
+  function rotorUpdate() {
+    if (!rotorNode || !audio) return;
+    const on = soundOn && mode === 'play';
+    const t = audio.currentTime;
+    rotorNode.g.gain.setTargetAtTime(on ? (holding ? 0.05 : 0.03) : 0, t, 0.08);
+    rotorNode.o.frequency.setTargetAtTime(holding ? 72 : 55, t, 0.15);
+  }
+  function crashSound() {
+    if (!soundOn || !audio) return;
+    const t = audio.currentTime, len = 0.7;
+    const buf = audio.createBuffer(1, audio.sampleRate * len, audio.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length) ** 2;
+    const src = audio.createBufferSource(), g = audio.createGain(), f = audio.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.setValueAtTime(1800, t); f.frequency.exponentialRampToValueAtTime(120, t + len);
+    g.gain.value = 0.35;
+    src.buffer = buf;
+    src.connect(f).connect(g).connect(audio.destination);
+    src.start();
+  }
+
+  // ===== 地形產生 =====
+  // 用「中心線隨機漫步 + 通道寬度隨距離變窄」產生一段段的洞頂與洞底
+  function gapAt(x) { return Math.max(150, 290 - x * 0.0045); }
+
+  function newGame() {
+    G = {
+      cam: 0,                     // 鏡頭在世界中的 x
+      y: VH / 2, vy: 0,           // 直升機高度與垂直速度
+      speed: 190,
+      segs: [], blocks: [], smoke: [], debris: [], crystals: [],
+      genX: 0, center: VH / 2, cvel: 0,
+      nextBlock: 700,             // 一開始先給一段沒有岩柱的暖身區
+      shake: 0, t: 0, dead: false,
+    };
+    ensureTerrain();
+  }
+
+  function heliX() { return VW * 0.26; }
+
+  function ensureTerrain() {
+    const need = G.cam + VW + SEG * 4;
+    while (G.genX < need) {
+      const x = G.genX;
+      const gap = gapAt(x);
+      if (x > 400) {
+        // 中心線慢慢飄移，速度也會隨機改變，形成起伏的洞穴
+        G.cvel = clamp(G.cvel + rand(-3.2, 3.2), -9, 9);
+        G.center += G.cvel;
+      }
+      const lo = 14 + gap / 2, hi = VH - 14 - gap / 2;
+      if (G.center < lo) { G.center = lo; G.cvel = Math.abs(G.cvel) * 0.5; }
+      if (G.center > hi) { G.center = hi; G.cvel = -Math.abs(G.cvel) * 0.5; }
+      // 加一點細碎的凹凸，讓岩壁看起來不那麼平滑
+      const top = G.center - gap / 2 + rand(-4, 4);
+      const bot = G.center + gap / 2 + rand(-4, 4);
+      G.segs.push({ x, top, bot });
+
+      // 偶爾在岩壁上長出發光晶石（純裝飾）
+      if (Math.random() < 0.06) G.crystals.push({ x: x + rand(0, SEG), y: Math.random() < 0.5 ? top : bot, up: Math.random() < 0.5, s: rand(5, 11) });
+
+      // 岩柱障礙物：保證上下至少有一邊留下夠寬的通道
+      if (x >= G.nextBlock) {
+        const h = rand(46, Math.min(115, gap * 0.48));
+        const room = gap - h;
+        const pass = 74;           // 留給直升機的最小通道
+        let by;
+        if (room - pass <= 0) by = top + (gap - h) / 2;
+        else by = Math.random() < 0.5 ? top + rand(0, room - pass) : bot - h - rand(0, room - pass);
+        G.blocks.push({ x, y: by, w: 26, h });
+        G.nextBlock = x + Math.max(200, rand(300, 460) - x * 0.004);
+      }
+      G.genX += SEG;
+    }
+    // 移除已經飛過的地形
+    const left = G.cam - SEG * 4;
+    while (G.segs.length && G.segs[0].x < left) G.segs.shift();
+    G.blocks = G.blocks.filter(b => b.x + b.w > left);
+    G.crystals = G.crystals.filter(c => c.x > left);
+  }
+
+  // ===== 遊戲流程 =====
+  function setMode(m) {
+    mode = m;
+    ui.title.hidden = m !== 'title';
+    ui.pause.hidden = m !== 'pause';
+    ui.over.hidden = m !== 'over';
+    ui.pauseBtn.textContent = m === 'pause' ? '繼續' : '暫停';
+    ui.pauseBtn.disabled = !(m === 'play' || m === 'pause');
+    rotorUpdate();
+  }
+
+  function startGame() {
+    initAudio();
+    if (audio && audio.state === 'suspended') audio.resume();
+    rotorStart();
+    newGame();
+    holding = false;
+    setMode('play');
+    last = performance.now();
+  }
+
+  function togglePause() {
+    if (G && G.dead) return;      // 墜毀動畫播放中不能暫停
+    if (mode === 'play') setMode('pause');
+    else if (mode === 'pause') { setMode('play'); last = performance.now(); }
+  }
+
+  function meters() { return Math.floor(G.cam / PX_PER_M); }
+
+  function crash() {
+    G.dead = true;
+    G.shake = 0.5;
+    const hx = G.cam + heliX();
+    for (let i = 0; i < 40; i++) {
+      const a = rand(0, Math.PI * 2), v = rand(60, 320);
+      G.debris.push({ x: hx, y: G.y, vx: Math.cos(a) * v + G.speed * 0.3, vy: Math.sin(a) * v, life: rand(0.5, 1.3), hot: Math.random() < 0.6 });
+    }
+    crashSound();
+    const d = meters();
+    const isNew = d > best;
+    if (isNew) { best = d; saveBest(best); }
+    ui.finalDist.textContent = d.toLocaleString();
+    ui.finalNote.textContent = isNew ? '新紀錄！' : `最高紀錄 ${best.toLocaleString()} m`;
+    ui.finalNote.classList.toggle('new', isNew);
+    ui.overTitle.textContent = d < 50 ? '起飛就墜毀' : '墜毀';
+    overAt = performance.now();
+    // 先讓爆炸播一下，再跳出結算畫面
+    setTimeout(() => { if (G && G.dead && mode === 'play') setMode('over'); updateHud(); }, 700);
+  }
+
+  // ===== 每一幀的邏輯 =====
+  function update(dt) {
+    G.t += dt;
+    G.shake = Math.max(0, G.shake - dt);
+
+    // 碎片與煙霧就算墜毀後也繼續動
+    for (const p of G.debris) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 600 * dt; p.vx *= 0.98; p.life -= dt; }
+    G.debris = G.debris.filter(p => p.life > 0);
+    for (const s of G.smoke) { s.x += s.vx * dt; s.y += s.vy * dt; s.r += 14 * dt; s.life -= dt; }
+    G.smoke = G.smoke.filter(s => s.life > 0);
+    if (G.dead) return;
+
+    // 速度隨距離慢慢加快
+    G.speed = 190 + Math.min(240, G.cam * 0.012);
+    G.cam += G.speed * dt;
+
+    // 按住 → 往上推；放開 → 重力往下
+    G.vy += (holding ? GRAVITY - LIFT : GRAVITY) * dt;
+    G.vy = clamp(G.vy, MAX_UP, MAX_DOWN);
+    G.y += G.vy * dt;
+
+    // 排氣煙：按住時噴比較多
+    if (Math.random() < (holding ? 0.9 : 0.35)) {
+      G.smoke.push({ x: G.cam + heliX() - 20, y: G.y + 2, vx: -G.speed * 0.15, vy: rand(-10, 10), r: rand(2, 4), life: 0.8 });
+    }
+
+    ensureTerrain();
+
+    // 碰撞：直升機機身簡化成一個矩形（旋翼不算，比較寬容）
+    const hx = G.cam + heliX();
+    const L = hx - 17, R = hx + 15, T = G.y - 8, B = G.y + 10;
+    for (const s of G.segs) {
+      if (s.x + SEG < L || s.x > R) continue;
+      if (T < s.top || B > s.bot) return crash();
+    }
+    for (const b of G.blocks) {
+      if (b.x < R && b.x + b.w > L && b.y < B && b.y + b.h > T) return crash();
+    }
+  }
+
+  // ===== 繪圖 =====
+  // 遠景岩壁：固定的形狀，用較慢速度捲動，做出景深
+  const farRocks = Array.from({ length: 24 }, (_, i) => ({ x: i * 70 + rand(0, 40), y: rand(40, VH - 40), rx: rand(30, 70), ry: rand(20, 60) }));
+
+  function drawBackground(cam) {
+    ctx.fillStyle = '#1c1714';
+    ctx.fillRect(0, -offY - 10, VW, VH + offY * 2 + 20);
+    const par = cam * 0.3, period = 24 * 70;
+    ctx.fillStyle = '#241d19';
+    for (const r of farRocks) {
+      let x = ((r.x - par) % period + period) % period - 80;
+      for (; x < VW + 80; x += period) {
+        ctx.beginPath(); ctx.ellipse(x, r.y, r.rx, r.ry, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  function drawWalls(cam) {
+    if (!G.segs.length) return;
+    const top = -offY - 20, bottom = VH + offY + 20;
+    const wall = ctx.createLinearGradient(0, top, 0, bottom);
+    wall.addColorStop(0, '#3b302a');
+    wall.addColorStop(0.5, '#4a3b31');
+    wall.addColorStop(1, '#3b302a');
+
+    // 洞頂
+    ctx.fillStyle = wall;
+    ctx.beginPath();
+    ctx.moveTo(G.segs[0].x - cam, top);
+    for (const s of G.segs) ctx.lineTo(s.x - cam, s.top);
+    ctx.lineTo(G.segs[G.segs.length - 1].x - cam, top);
+    ctx.fill();
+    // 洞底
+    ctx.beginPath();
+    ctx.moveTo(G.segs[0].x - cam, bottom);
+    for (const s of G.segs) ctx.lineTo(s.x - cam, s.bot);
+    ctx.lineTo(G.segs[G.segs.length - 1].x - cam, bottom);
+    ctx.fill();
+
+    // 岩壁邊緣的亮線
+    ctx.strokeStyle = '#7a6250'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath(); G.segs.forEach((s, i) => i ? ctx.lineTo(s.x - cam, s.top) : ctx.moveTo(s.x - cam, s.top)); ctx.stroke();
+    ctx.beginPath(); G.segs.forEach((s, i) => i ? ctx.lineTo(s.x - cam, s.bot) : ctx.moveTo(s.x - cam, s.bot)); ctx.stroke();
+  }
+
+  function drawCrystals(cam) {
+    ctx.save();
+    ctx.shadowColor = '#6fe0cf'; ctx.shadowBlur = 10;
+    ctx.fillStyle = '#6fe0cf';
+    for (const c of G.crystals) {
+      const x = c.x - cam, dir = c.up ? 1 : -1;
+      // 洞頂上的晶石往下長，洞底的往上長
+      const grow = c.y < VH / 2 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(x - c.s * 0.5, c.y);
+      ctx.lineTo(x + dir * 2, c.y + grow * c.s * 1.6);
+      ctx.lineTo(x + c.s * 0.5, c.y);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawBlocks(cam) {
+    for (const b of G.blocks) {
+      const x = b.x - cam;
+      if (x > VW + 40 || x + b.w < -40) continue;
+      const g = ctx.createLinearGradient(x, 0, x + b.w, 0);
+      g.addColorStop(0, '#5a4738');
+      g.addColorStop(1, '#3a2e26');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x, b.y, b.w, b.h, 6) : ctx.rect(x, b.y, b.w, b.h);
+      ctx.fill();
+      ctx.strokeStyle = '#8a705c'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  }
+
+  function drawHeli(x, y, vy, t) {
+    const tilt = clamp(vy / 900, -0.28, 0.32);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(tilt);
+
+    // 尾桁
+    ctx.fillStyle = '#d9772a';
+    ctx.beginPath(); ctx.moveTo(-6, -3); ctx.lineTo(-30, -2); ctx.lineTo(-30, 1); ctx.lineTo(-6, 4); ctx.fill();
+    // 尾翼與尾旋翼
+    ctx.fillRect(-32, -8, 4, 9);
+    const tr = Math.sin(t * 60) * 6;
+    ctx.strokeStyle = '#efe6da'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-30, -4 - tr); ctx.lineTo(-30, -4 + tr); ctx.stroke();
+
+    // 起落架
+    ctx.strokeStyle = '#2a211c'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-10, 11); ctx.lineTo(12, 11); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-5, 6); ctx.lineTo(-6, 11); ctx.moveTo(6, 6); ctx.lineTo(7, 11); ctx.stroke();
+
+    // 機身
+    ctx.fillStyle = '#ff9a2e';
+    ctx.beginPath(); ctx.ellipse(2, 0, 15, 8.5, 0, 0, Math.PI * 2); ctx.fill();
+    // 座艙玻璃
+    ctx.fillStyle = '#9fe6ef';
+    ctx.beginPath(); ctx.ellipse(8, -2, 6.5, 5, 0, -Math.PI / 2, Math.PI / 2); ctx.fill();
+    // 旋翼軸
+    ctx.fillStyle = '#2a211c';
+    ctx.fillRect(0, -12, 3, 5);
+    // 主旋翼：用寬度變化模擬高速旋轉
+    const blade = reduceMotion ? 22 : 6 + Math.abs(Math.sin(t * 38)) * 20;
+    ctx.strokeStyle = '#efe6da'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(1.5 - blade, -12); ctx.lineTo(1.5 + blade, -12); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    if (!W) return;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    // 切換到邏輯座標：縮放並把 360 高的遊戲區放在垂直中央
+    ctx.setTransform(DPR * scale, 0, 0, DPR * scale, 0, DPR * scale * offY);
+    if (G && G.shake > 0 && !reduceMotion) ctx.translate(rand(-6, 6) * G.shake, rand(-6, 6) * G.shake);
+
+    if (!G) {
+      // 標題畫面還沒有遊戲：先產生一段地形當背景
+      newGame();
+    }
+    const cam = G.cam;
+    drawBackground(cam);
+
+    // 煙霧
+    for (const s of G.smoke) {
+      ctx.fillStyle = `rgba(190,175,160,${Math.max(0, s.life) * 0.25})`;
+      ctx.beginPath(); ctx.arc(s.x - cam, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    drawBlocks(cam);
+    drawWalls(cam);
+    drawCrystals(cam);
+
+    if (!G.dead) drawHeli(heliX(), G.y, G.vy, G.t || performance.now() / 1000);
+
+    // 爆炸碎片
+    for (const p of G.debris) {
+      ctx.globalAlpha = clamp(p.life, 0, 1);
+      ctx.fillStyle = p.hot ? (p.life > 0.7 ? '#ffd27a' : '#ff9a2e') : '#5a4738';
+      ctx.fillRect(p.x - cam - 2, p.y - 2, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ===== HUD =====
+  const shown = {};
+  function setHtml(el, key, v) { if (shown[key] !== v) { shown[key] = v; el.innerHTML = v; } }
+  function updateHud() {
+    if (!G) return;
+    setHtml(ui.dist, 'dist', `${meters().toLocaleString()}<small>m</small>`);
+    // 速度換算成看起來合理的 km/h：單位/秒 → 公尺/秒 → 公里/時
+    const kmh = G.dead ? 0 : Math.round(G.speed / PX_PER_M * 3.6 * 4);
+    setHtml(ui.speed, 'speed', `${kmh}<small>km/h</small>`);
+    setHtml(ui.best, 'best', `${Math.max(best, meters()).toLocaleString()}<small>m</small>`);
+  }
+
+  // ===== 主迴圈 =====
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    if (mode === 'play') { update(dt); updateHud(); }
+    else if (mode === 'over' && G) update(dt);  // 讓碎片落完
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ===== 輸入：按住 = 上升 =====
+  function press(e) {
+    if (mode === 'title' || mode === 'over') {
+      // 結算畫面出現後稍等一下，避免還按著就立刻重開
+      if (mode === 'over' && performance.now() - overAt < 900) return;
+      if (e && e.target && e.target.tagName === 'BUTTON') return;
+      startGame();
+    }
+    if (mode === 'play') { holding = true; rotorUpdate(); }
+  }
+  function release() { holding = false; rotorUpdate(); }
+
+  const stage = $('stage');
+  stage.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    if (mode === 'pause') return;
+    e.preventDefault();
+    stage.setPointerCapture?.(e.pointerId);
+    press(e);
+  });
+  stage.addEventListener('pointerup', release);
+  stage.addEventListener('pointercancel', release);
+  stage.addEventListener('contextmenu', e => e.preventDefault());
+
+  const UP_KEYS = [' ', 'ArrowUp', 'w', 'W'];
+  window.addEventListener('keydown', e => {
+    if (UP_KEYS.includes(e.key)) {
+      e.preventDefault();
+      if (e.repeat) return;
+      if (document.activeElement?.tagName === 'BUTTON') document.activeElement.blur();
+      press();
+    }
+    if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') togglePause();
+  });
+  window.addEventListener('keyup', e => { if (UP_KEYS.includes(e.key)) release(); });
+  window.addEventListener('blur', () => { release(); if (mode === 'play' && !G.dead) setMode('pause'); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'play' && !G.dead) setMode('pause'); });
+
+  $('startBtn').addEventListener('click', startGame);
+  $('againBtn').addEventListener('click', startGame);
+  $('resumeBtn').addEventListener('click', togglePause);
+  ui.pauseBtn.addEventListener('click', togglePause);
+  ui.soundBtn.addEventListener('click', () => {
+    soundOn = !soundOn;
+    ui.soundBtn.textContent = '音效：' + (soundOn ? '開' : '關');
+    rotorUpdate();
+  });
+
+  // ===== 啟動 =====
+  function start(data) {
+    best = Math.max(loadBest(), Number(data?.best) || 0);
+    ui.best.innerHTML = `${best.toLocaleString()}<small>m</small>`;
+    setMode('title');
+    resize();
+    requestAnimationFrame(frame);
+  }
+  window.claude?.hot?.snapshot?.(() => ({ best: Math.max(best, G ? meters() : 0) }));
+  window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+})();
+</script>
+</body>
+</html>
