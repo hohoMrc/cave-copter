@@ -30,3 +30,18 @@ open index.html
 - `draw()`：繪製洞穴、直升機、煙霧與爆炸
 - `ITEMS`：道具種類、出現比重與持續時間
 - 檔案開頭的 `GRAVITY`、`LIFT`、`gapAt()` 可以用來調整手感和難度
+
+## 線上排行榜
+
+後端在 `server/`，跑在 AWS EC2（只用 Python 內建模組，不需安裝套件）：
+
+- `server/game_api.py`：API（遊玩次數、前 10 名、上傳成績與基本防作弊）
+- `server/game-api.service`：systemd 設定（port 8002，記憶體上限 64MB）
+- 對外網址：`https://hoho-game.duckdns.org/game-api/`（Caddy 反向代理）
+
+更新後端：
+
+```bash
+scp -i ~/.ssh/stock-key server/game_api.py ubuntu@13.231.218.149:/home/ubuntu/game-api/
+ssh -i ~/.ssh/stock-key ubuntu@13.231.218.149 "sudo systemctl restart game-api"
+```

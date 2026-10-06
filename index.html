@@ -123,11 +123,59 @@
 
   .overlay {
     position: absolute; inset: 0;
-    display: grid; place-items: center;
+    display: flex; flex-wrap: wrap;
+    justify-content: center; align-items: center; align-content: safe center;
+    gap: 20px 36px;
     padding: 20px;
+    overflow-y: auto;              /* 畫面太矮時（手機橫放）可以捲動 */
     background: #0b0908b8;
     text-align: center;
   }
+
+  /* 線上排行榜 */
+  .board {
+    width: min(100%, 17rem);
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 14px 16px;
+    background: #15110fe6;
+    border: 1px solid #3a2f28;
+    border-radius: 8px;
+    text-align: left;
+  }
+  .board h3 {
+    margin: 0;
+    font-family: var(--font-gauge);
+    font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--dust);
+  }
+  .board .plays { margin: 0; font-size: 0.85rem; color: var(--dust); }
+  .board .plays b { font-family: var(--font-gauge); color: var(--ink); font-size: 1.05rem; }
+  .board ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+  .board li {
+    display: grid; grid-template-columns: 1.6rem 1fr auto; gap: 8px; align-items: baseline;
+    padding: 3px 6px; border-radius: 4px;
+    font-size: 0.88rem;
+  }
+  .board li .rank { font-family: var(--font-gauge); color: var(--dust); font-variant-numeric: tabular-nums; }
+  .board li:first-child .rank { color: var(--signal); }
+  .board li .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board li .m { font-family: var(--font-gauge); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .board li.me { background: #ff9a2e26; }
+  .board .empty { margin: 0; font-size: 0.85rem; color: var(--dust); }
+
+  /* 進榜時輸入名字 */
+  .entry { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .entry label { font-size: 0.9rem; color: var(--signal); font-weight: 500; }
+  .entry .row { display: flex; gap: 8px; }
+  .entry input {
+    font: inherit; font-size: 1rem;
+    width: 10rem; padding: 8px 12px;
+    border-radius: 6px; border: 1px solid #3a2f28;
+    background: var(--panel); color: var(--ink);
+  }
+  .entry input:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+  .entry button { padding: 8px 18px; font-size: 0.95rem; }
+  .entry .msg { margin: 0; font-size: 0.8rem; color: var(--dust); min-height: 1.2em; }
   .card { max-width: 28rem; display: flex; flex-direction: column; gap: 12px; align-items: center; }
   .card h2 {
     margin: 0;
@@ -231,6 +279,7 @@
         <button id="startBtn" type="button">起飛</button>
         <p class="portrait" id="portraitTip" hidden>把手機橫放，可以看到更遠的地形</p>
       </div>
+      <section class="board" aria-label="線上排行榜"></section>
     </div>
 
     <div class="overlay" id="pauseScreen" hidden>
@@ -246,8 +295,17 @@
         <h2 id="overTitle">墜毀</h2>
         <div class="readout"><span id="finalDist">0</span><small>m</small></div>
         <p class="note" id="finalNote">最高紀錄 0 m</p>
+        <form class="entry" id="entryForm" hidden>
+          <label for="nameInput">進入前 10 名！留下你的名字</label>
+          <div class="row">
+            <input id="nameInput" type="text" maxlength="12" autocomplete="nickname" placeholder="最多 12 個字" required>
+            <button type="submit" id="submitBtn">送出</button>
+          </div>
+          <p class="msg" id="entryMsg"></p>
+        </form>
         <button id="againBtn" type="button">再飛一次</button>
       </div>
+      <section class="board" aria-label="線上排行榜"></section>
     </div>
   </div>
 
@@ -467,10 +525,108 @@
     rotorUpdate();
   }
 
+  // ===== 線上排行榜（後端在 EC2：server/game_api.py）=====
+  const API = 'https://hoho-game.duckdns.org/game-api';
+  let online = { ok: false, loading: true, plays: null, top: [] };
+  let runId = null;               // 這一局在伺服器上的編號，上傳成績時用
+  let myEntry = null;             // 剛上榜的那筆，在榜上標示出來
+  const entryForm = $('entryForm'), nameInput = $('nameInput'), entryMsg = $('entryMsg');
+
+  async function api(path, body) {
+    const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {};
+    const res = await fetch(API + path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '連線失敗');
+    return data;
+  }
+
+  async function loadStats() {
+    try { online = { ok: true, ...(await api('/stats')) }; }
+    catch { online = { ...online, ok: false, loading: false }; }
+    renderBoards();
+  }
+
+  function renderBoards() {
+    for (const el of document.querySelectorAll('.board')) {
+      el.replaceChildren();
+      const h = document.createElement('h3');
+      h.textContent = '線上排行榜';
+      el.append(h);
+      if (!online.ok) {
+        const p = document.createElement('p');
+        p.className = 'empty';
+        p.textContent = online.loading ? '讀取中…' : '排行榜暫時連不上，遊戲還是可以照常玩';
+        el.append(p);
+        continue;
+      }
+      const plays = document.createElement('p');
+      plays.className = 'plays';
+      plays.innerHTML = `已被遊玩 <b>${Number(online.plays).toLocaleString()}</b> 次`;
+      el.append(plays);
+      if (!online.top.length) {
+        const p = document.createElement('p');
+        p.className = 'empty';
+        p.textContent = '還沒有人上榜，第一名就是你';
+        el.append(p);
+        continue;
+      }
+      const ol = document.createElement('ol');
+      let marked = false;
+      online.top.forEach((row, i) => {
+        const li = document.createElement('li');
+        // 名字是玩家輸入的，一律用 textContent 放進去，避免被塞入 HTML
+        const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = i + 1;
+        const name = document.createElement('span'); name.className = 'name'; name.textContent = row.name;
+        const m = document.createElement('span'); m.className = 'm'; m.textContent = `${row.distance.toLocaleString()} m`;
+        if (!marked && myEntry && row.name === myEntry.name && row.distance === myEntry.distance) { li.className = 'me'; marked = true; }
+        li.append(rank, name, m);
+        ol.append(li);
+      });
+      el.append(ol);
+    }
+  }
+
+  // 這個距離能不能進前 10 名
+  function qualifies(d) {
+    if (!online.ok || !runId || d <= 0) return false;
+    return online.top.length < 10 || d > online.top[online.top.length - 1].distance;
+  }
+
+  function loadName() { try { return localStorage.getItem('copter-name') || ''; } catch { return ''; } }
+  function saveName(v) { try { localStorage.setItem('copter-name', v); } catch {} }
+
+  entryForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) { entryMsg.textContent = '請輸入名字'; return; }
+    const distance = Number(entryForm.dataset.distance);
+    $('submitBtn').disabled = true;
+    entryMsg.textContent = '送出中…';
+    try {
+      online = { ok: true, ...(await api('/scores', { run_id: runId, name, distance })) };
+      saveName(name);
+      myEntry = { name: name.slice(0, 12), distance };
+      runId = null;
+      entryForm.hidden = true;
+      const rank = online.top.findIndex(r => r.name === myEntry.name && r.distance === distance);
+      ui.finalNote.textContent = rank >= 0 ? `登上線上排行榜第 ${rank + 1} 名！` : '已送出';
+      ui.finalNote.classList.add('new');
+      renderBoards();
+    } catch (err) {
+      entryMsg.textContent = err.message;
+    } finally {
+      $('submitBtn').disabled = false;
+    }
+  });
+
   function startGame() {
     initAudio();
     if (audio && audio.state === 'suspended') audio.resume();
     rotorStart();
+    // 通知伺服器開了一局（遊玩次數 +1）；連不上也不影響遊戲
+    runId = null;
+    myEntry = null;
+    api('/runs', {}).then(r => { runId = r.run_id; online.plays = r.plays; }).catch(() => {});
     newGame();
     holding = false;
     setMode('play');
@@ -498,9 +654,19 @@
     const isNew = d > best;
     if (isNew) { best = d; saveBest(best); }
     ui.finalDist.textContent = d.toLocaleString();
-    ui.finalNote.textContent = isNew ? '新紀錄！' : `最高紀錄 ${best.toLocaleString()} m`;
+    ui.finalNote.textContent = isNew ? '個人新紀錄！' : `個人最高 ${best.toLocaleString()} m`;
     ui.finalNote.classList.toggle('new', isNew);
     ui.overTitle.textContent = d < 50 ? '起飛就墜毀' : '墜毀';
+    // 夠資格進前 10 名就顯示輸入名字的表單
+    const canEnter = qualifies(d);
+    entryForm.hidden = !canEnter;
+    entryForm.dataset.distance = d;
+    entryMsg.textContent = '';
+    if (canEnter && !nameInput.value) nameInput.value = loadName();
+    if (!canEnter) loadStats();   // 順便更新排行榜與遊玩次數
+    else renderBoards();
+    // 有實體鍵盤時自動把游標放進輸入框（手機上不自動跳出鍵盤）
+    if (canEnter && matchMedia('(pointer: fine)').matches) setTimeout(() => nameInput.focus(), 750);
     overAt = performance.now();
     // 先讓爆炸播一下，再跳出結算畫面
     setTimeout(() => { if (G && G.dead && mode === 'play') setMode('over'); updateHud(); }, 700);
@@ -866,7 +1032,8 @@
 
   const stage = $('stage');
   stage.addEventListener('pointerdown', e => {
-    if (e.target.tagName === 'BUTTON') return;
+    // 點在按鈕、輸入框、說明卡片或排行榜上時，不要觸發起飛
+    if (e.target.closest('button, input, form, .card, .board')) return;
     if (mode === 'pause') return;
     e.preventDefault();
     stage.setPointerCapture?.(e.pointerId);
@@ -878,6 +1045,7 @@
 
   const UP_KEYS = [' ', 'ArrowUp', 'w', 'W'];
   window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;   // 正在輸入名字時，空白鍵、W 都是打字
     if (UP_KEYS.includes(e.key)) {
       e.preventDefault();
       if (e.repeat) return;
@@ -910,6 +1078,8 @@
     ui.best.innerHTML = `${best.toLocaleString()}<small>m</small>`;
     setMode('title');
     resize();
+    renderBoards();
+    loadStats();
     requestAnimationFrame(frame);
   }
   window.claude?.hot?.snapshot?.(() => ({ best: Math.max(best, G ? meters() : 0) }));

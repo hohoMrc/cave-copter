@@ -1,0 +1,18 @@
+[Unit]
+Description=Cave Copter leaderboard API
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/game-api
+ExecStart=/usr/bin/python3 /home/ubuntu/game-api/game_api.py
+Environment=PORT=8002
+Environment=DB_PATH=/home/ubuntu/game-api/data.db
+Restart=on-failure
+RestartSec=5
+# 限制記憶體與 CPU，避免影響同一台機器上的其他服務
+MemoryMax=64M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target
