@@ -337,6 +337,31 @@
     slow:   { name: '慢動作', color: '#c3a6ff', weight: 3, time: 5 },
     mini:   { name: '縮小',   color: '#ffd27a', weight: 3, time: 7 },
   };
+  // ===== 場景 =====
+  // 每飛 ZONE_M 公尺換一個場景，5 個場景跑完會循環，區號持續往上加
+  // 換場景時，岩壁顏色會在 BLEND_M 公尺內漸變過去，從遠處就能看到前方的新場景
+  const ZONE_M = 250, BLEND_M = 40;
+  const SCENES = [
+    { name: '玄武岩洞', bg: '#1c1714', far: '#241d19', wall: '#45372e', edge: '#7a6250', block: '#5a4738', blockEdge: '#8a705c', crystal: '#6fe0cf', ambient: null },
+    { name: '冰晶洞窟', bg: '#0e1822', far: '#152536', wall: '#36566f', edge: '#a9d8f0', block: '#557d9c', blockEdge: '#cdeeff', crystal: '#e8fbff', ambient: 'snow' },
+    { name: '熔岩地帶', bg: '#1a0b07', far: '#2a120b', wall: '#3a1a12', edge: '#ff6a2a', block: '#4a2016', blockEdge: '#ff8a3a', crystal: '#ffb347', ambient: 'ember' },
+    { name: '翡翠礦坑', bg: '#0b1712', far: '#11241a', wall: '#2a4632', edge: '#7fcf8a', block: '#3a5c42', blockEdge: '#9fe0a8', crystal: '#7dffb0', ambient: 'spore' },
+    { name: '幽光深淵', bg: '#0b0916', far: '#141024', wall: '#272040', edge: '#9a7cff', block: '#352a54', blockEdge: '#b8a0ff', crystal: '#ff7ce0', ambient: 'spore' },
+  ];
+  const ZONE_LEN = ZONE_M * PX_PER_M, BLEND_LEN = BLEND_M * PX_PER_M;
+  const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const SCENE_RGB = SCENES.map(s => Object.fromEntries(Object.entries(s).filter(([, v]) => typeof v === 'string' && v[0] === '#').map(([k, v]) => [k, hexRgb(v)])));
+  const zoneAt = x => Math.max(0, Math.floor(x / ZONE_LEN));
+  const sceneOf = zone => SCENES[zone % SCENES.length];
+  // 取得世界座標 x 處的某個顏色；在場景交界處把前後兩個場景的顏色混合
+  function sceneColor(x, key) {
+    const z = zoneAt(x), local = x - z * ZONE_LEN;
+    const cur = SCENE_RGB[z % SCENES.length][key];
+    if (z === 0 || local >= BLEND_LEN) return `rgb(${cur})`;
+    const prev = SCENE_RGB[(z - 1) % SCENES.length][key], t = local / BLEND_LEN;
+    return `rgb(${cur.map((c, i) => Math.round(prev[i] + (c - prev[i]) * t))})`;
+  }
+
   const SLOW_FACTOR = 0.55;       // 慢動作時世界的速度倍率
   const MINI_SIZE = 0.6;          // 縮小時機身的大小倍率
   function pickItemType() {
@@ -455,6 +480,8 @@
       shield: false,              // 有沒有護盾
       slow: 0, mini: 0,           // 慢動作、縮小剩下的秒數
       inv: 0,                     // 護盾破掉後短暫無敵的秒數
+      zone: 0, banner: null,      // 目前在第幾區（從 0 算）、進入新區時的標題
+      ambient: [],                // 場景的環境粒子：雪花、火星、孢子
       shake: 0, t: 0, dead: false,
     };
     ensureTerrain();
@@ -478,10 +505,10 @@
       // 加一點細碎的凹凸，讓岩壁看起來不那麼平滑
       const top = G.center - gap / 2 + rand(-4, 4);
       const bot = G.center + gap / 2 + rand(-4, 4);
-      G.segs.push({ x, top, bot });
+      G.segs.push({ x, top, bot, wall: sceneColor(x, 'wall'), edge: sceneColor(x, 'edge') });
 
       // 偶爾在岩壁上長出發光晶石（純裝飾）
-      if (Math.random() < 0.06) G.crystals.push({ x: x + rand(0, SEG), y: Math.random() < 0.5 ? top : bot, up: Math.random() < 0.5, s: rand(5, 11) });
+      if (Math.random() < 0.06) G.crystals.push({ x: x + rand(0, SEG), y: Math.random() < 0.5 ? top : bot, up: Math.random() < 0.5, s: rand(5, 11), color: sceneColor(x, 'crystal') });
 
       // 岩柱障礙物：保證上下至少有一邊留下夠寬的通道
       if (x >= G.nextBlock) {
@@ -491,7 +518,7 @@
         let by;
         if (room - pass <= 0) by = top + (gap - h) / 2;
         else by = Math.random() < 0.5 ? top + rand(0, room - pass) : bot - h - rand(0, room - pass);
-        G.blocks.push({ x, y: by, w: 26, h });
+        G.blocks.push({ x, y: by, w: 26, h, color: sceneColor(x, 'block'), edge: sceneColor(x, 'blockEdge') });
         G.nextBlock = x + Math.max(200, rand(300, 460) - x * 0.004);
       }
 
@@ -629,6 +656,7 @@
     api('/runs', {}).then(r => { runId = r.run_id; online.plays = r.plays; }).catch(() => {});
     newGame();
     holding = false;
+    G.banner = { zone: 0, life: 2.2 };
     setMode('play');
     last = performance.now();
   }
@@ -656,7 +684,7 @@
     ui.finalDist.textContent = d.toLocaleString();
     ui.finalNote.textContent = isNew ? '個人新紀錄！' : `個人最高 ${best.toLocaleString()} m`;
     ui.finalNote.classList.toggle('new', isNew);
-    ui.overTitle.textContent = d < 50 ? '起飛就墜毀' : '墜毀';
+    ui.overTitle.textContent = d < 50 ? '起飛就墜毀' : `墜毀於第 ${G.zone + 1} 區・${sceneOf(G.zone).name}`;
     // 夠資格進前 10 名就顯示輸入名字的表單
     const canEnter = qualifies(d);
     entryForm.hidden = !canEnter;
@@ -716,12 +744,32 @@
     for (const p of G.debris) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 600 * dt; p.vx *= 0.98; p.life -= dt; }
     G.debris = G.debris.filter(p => p.life > 0);
     for (const s of G.smoke) { s.x += s.vx * dt; s.y += s.vy * dt; s.r += 14 * dt; s.life -= dt; }
+    for (const a of G.ambient) { a.x += a.vx * dt; a.y += a.vy * dt + (a.kind === 'snow' ? Math.sin(G.t * 2 + a.x) * 8 * dt : 0); a.life -= dt; }
+    G.ambient = G.ambient.filter(a => a.life > 0 && a.x > G.cam - 20);
+    if (G.banner && (G.banner.life -= dt) <= 0) G.banner = null;
     G.smoke = G.smoke.filter(s => s.life > 0);
     if (G.dead) return;
 
     // 速度隨距離慢慢加快
     G.speed = 190 + Math.min(240, G.cam * 0.012);
     G.cam += G.speed * dt;
+
+    // 進入新的區域：跳出區域標題
+    const zone = zoneAt(G.cam + heliX());
+    if (zone > G.zone) {
+      G.zone = zone;
+      G.banner = { zone, life: 2.6 };
+      tone(523, 0.18, 'triangle', 0.06); setTimeout(() => tone(784, 0.3, 'triangle', 0.06), 140);
+    }
+
+    // 環境粒子：依前方的場景產生
+    const amb = sceneOf(zoneAt(G.cam + VW * 0.6)).ambient;
+    if (amb && G.ambient.length < 50 && Math.random() < dt * 22) {
+      const x = G.cam + rand(0, VW + 60);
+      if (amb === 'snow') G.ambient.push({ kind: amb, x, y: rand(-10, VH * 0.4), vx: rand(-25, 0), vy: rand(18, 40), r: rand(1, 2.2), life: 7, max: 7 });
+      if (amb === 'ember') G.ambient.push({ kind: amb, x, y: rand(VH * 0.55, VH), vx: rand(-10, 10), vy: rand(-60, -25), r: rand(1, 2), life: 3.5, max: 3.5 });
+      if (amb === 'spore') G.ambient.push({ kind: amb, x, y: rand(20, VH - 20), vx: rand(-8, 8), vy: rand(-8, 8), r: rand(1.2, 2.4), life: rand(3, 6), max: 6, color: sceneColor(x, 'crystal') });
+    }
 
     // 按住 → 往上推；放開 → 重力往下
     G.vy += (holding ? GRAVITY - LIFT : GRAVITY) * dt;
@@ -765,7 +813,7 @@
         breakShield(hx);
         b.broken = true;
         for (let i = 0; i < 24; i++) {
-          G.debris.push({ x: b.x + rand(0, b.w), y: b.y + rand(0, b.h), vx: rand(0, 200), vy: rand(-150, 50), life: rand(0.5, 1), color: '#5a4738' });
+          G.debris.push({ x: b.x + rand(0, b.w), y: b.y + rand(0, b.h), vx: rand(0, 200), vy: rand(-150, 50), life: rand(0.5, 1), color: b.color });
         }
       } else return crash();
     }
@@ -777,10 +825,11 @@
   const farRocks = Array.from({ length: 24 }, (_, i) => ({ x: i * 70 + rand(0, 40), y: rand(40, VH - 40), rx: rand(30, 70), ry: rand(20, 60) }));
 
   function drawBackground(cam) {
-    ctx.fillStyle = '#1c1714';
+    const mid = cam + VW / 2;
+    ctx.fillStyle = sceneColor(mid, 'bg');
     ctx.fillRect(0, -offY - 10, VW, VH + offY * 2 + 20);
     const par = cam * 0.3, period = 24 * 70;
-    ctx.fillStyle = '#241d19';
+    ctx.fillStyle = sceneColor(mid, 'far');
     for (const r of farRocks) {
       let x = ((r.x - par) % period + period) % period - 80;
       for (; x < VW + 80; x += period) {
@@ -790,39 +839,44 @@
   }
 
   function drawWalls(cam) {
-    if (!G.segs.length) return;
+    const segs = G.segs;
+    if (segs.length < 2) return;
     const top = -offY - 20, bottom = VH + offY + 20;
-    const wall = ctx.createLinearGradient(0, top, 0, bottom);
-    wall.addColorStop(0, '#3b302a');
-    wall.addColorStop(0.5, '#4a3b31');
-    wall.addColorStop(1, '#3b302a');
-
-    // 洞頂
-    ctx.fillStyle = wall;
-    ctx.beginPath();
-    ctx.moveTo(G.segs[0].x - cam, top);
-    for (const s of G.segs) ctx.lineTo(s.x - cam, s.top);
-    ctx.lineTo(G.segs[G.segs.length - 1].x - cam, top);
-    ctx.fill();
-    // 洞底
-    ctx.beginPath();
-    ctx.moveTo(G.segs[0].x - cam, bottom);
-    for (const s of G.segs) ctx.lineTo(s.x - cam, s.bot);
-    ctx.lineTo(G.segs[G.segs.length - 1].x - cam, bottom);
-    ctx.fill();
-
+    // 洞頂與洞底：每段畫成一個四邊形（多 0.6 寬，避免段與段之間出現細縫）
+    for (let i = 0; i < segs.length - 1; i++) {
+      const a = segs[i], b = segs[i + 1];
+      const x1 = a.x - cam, x2 = b.x - cam + 0.6;
+      if (x2 < -2 || x1 > VW + 2) continue;
+      ctx.fillStyle = a.wall;
+      ctx.beginPath(); ctx.moveTo(x1, top); ctx.lineTo(x1, a.top); ctx.lineTo(x2, b.top); ctx.lineTo(x2, top); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x1, bottom); ctx.lineTo(x1, a.bot); ctx.lineTo(x2, b.bot); ctx.lineTo(x2, bottom); ctx.fill();
+    }
+    // 上下兩端加一點陰影，讓岩壁有厚度
+    const shade = ctx.createLinearGradient(0, top, 0, bottom);
+    shade.addColorStop(0, 'rgba(0,0,0,0.35)');
+    shade.addColorStop(0.3, 'rgba(0,0,0,0)');
+    shade.addColorStop(0.7, 'rgba(0,0,0,0)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.35)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, top, VW, bottom - top);
     // 岩壁邊緣的亮線
-    ctx.strokeStyle = '#7a6250'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
-    ctx.beginPath(); G.segs.forEach((s, i) => i ? ctx.lineTo(s.x - cam, s.top) : ctx.moveTo(s.x - cam, s.top)); ctx.stroke();
-    ctx.beginPath(); G.segs.forEach((s, i) => i ? ctx.lineTo(s.x - cam, s.bot) : ctx.moveTo(s.x - cam, s.bot)); ctx.stroke();
+    ctx.lineWidth = 2; ctx.lineCap = 'round';
+    for (let i = 0; i < segs.length - 1; i++) {
+      const a = segs[i], b = segs[i + 1];
+      if (b.x - cam < -2 || a.x - cam > VW + 2) continue;
+      ctx.strokeStyle = a.edge;
+      ctx.beginPath(); ctx.moveTo(a.x - cam, a.top); ctx.lineTo(b.x - cam, b.top);
+      ctx.moveTo(a.x - cam, a.bot); ctx.lineTo(b.x - cam, b.bot); ctx.stroke();
+    }
   }
 
   function drawCrystals(cam) {
     ctx.save();
-    ctx.shadowColor = '#6fe0cf'; ctx.shadowBlur = 10;
-    ctx.fillStyle = '#6fe0cf';
+    ctx.shadowBlur = 10;
     for (const c of G.crystals) {
       const x = c.x - cam, dir = c.up ? 1 : -1;
+      if (x < -20 || x > VW + 20) continue;
+      ctx.fillStyle = ctx.shadowColor = c.color;
       // 洞頂上的晶石往下長，洞底的往上長
       const grow = c.y < VH / 2 ? 1 : -1;
       ctx.beginPath();
@@ -838,15 +892,51 @@
     for (const b of G.blocks) {
       const x = b.x - cam;
       if (x > VW + 40 || x + b.w < -40) continue;
-      const g = ctx.createLinearGradient(x, 0, x + b.w, 0);
-      g.addColorStop(0, '#5a4738');
-      g.addColorStop(1, '#3a2e26');
-      ctx.fillStyle = g;
+      ctx.fillStyle = b.color;
       ctx.beginPath();
       ctx.roundRect ? ctx.roundRect(x, b.y, b.w, b.h, 6) : ctx.rect(x, b.y, b.w, b.h);
       ctx.fill();
-      ctx.strokeStyle = '#8a705c'; ctx.lineWidth = 1.5; ctx.stroke();
+      // 右半邊暗一點，做出立體感
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(x + b.w * 0.55, b.y + 3, b.w * 0.45 - 2, b.h - 6);
+      ctx.strokeStyle = b.edge; ctx.lineWidth = 1.5; ctx.stroke();
     }
+  }
+
+  function drawAmbient(cam) {
+    for (const a of G.ambient) {
+      const x = a.x - cam, fade = Math.min(1, a.life, (a.max - a.life) * 2);
+      if (a.kind === 'snow') {
+        ctx.fillStyle = `rgba(235,248,255,${0.75 * fade})`;
+      } else if (a.kind === 'ember') {
+        ctx.fillStyle = `rgba(255,${120 + Math.floor(a.life * 30)},40,${0.9 * fade})`;
+      } else {
+        ctx.globalAlpha = 0.7 * fade * (0.6 + Math.sin(G.t * 4 + a.x) * 0.4);
+        ctx.fillStyle = a.color;
+      }
+      ctx.beginPath(); ctx.arc(x, a.y, a.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // 進入新區域時，畫面上方出現「ZONE 02 / 冰晶洞窟」
+  function drawBanner() {
+    const b = G.banner;
+    if (!b) return;
+    const total = b.zone === 0 ? 2.2 : 2.6, age = total - b.life;
+    const alpha = Math.min(1, age / 0.3, b.life / 0.6);
+    const scene = sceneOf(b.zone);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = scene.edge;
+    ctx.font = '700 12px "Chakra Petch", monospace';
+    ctx.fillText(`ZONE ${String(b.zone + 1).padStart(2, '0')}`, VW / 2, 58);
+    ctx.font = '900 26px "Noto Sans TC", sans-serif';
+    ctx.fillStyle = '#efe6da';
+    ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 8;
+    ctx.fillText(scene.name, VW / 2, 90);
+    ctx.restore();
   }
 
   // 道具外觀：發光的圓，裡面畫各自的符號
@@ -939,6 +1029,7 @@
     drawBlocks(cam);
     drawWalls(cam);
     drawCrystals(cam);
+    drawAmbient(cam);
 
     const t = G.t || performance.now() / 1000;
     for (const it of G.items) if (!it.taken) drawItem(it, cam, t);
@@ -977,6 +1068,8 @@
       ctx.fillText(p.text, p.x - cam, p.y - 18);
     }
     ctx.globalAlpha = 1;
+
+    drawBanner();
 
     // 慢動作時畫面蒙上一層淡紫
     if (G.slow > 0) {
