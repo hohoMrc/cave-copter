@@ -199,6 +199,7 @@
   .card .readout small { font-size: 0.4em; color: var(--dust); margin-left: 4px; }
   .card .note { font-size: 0.85rem; color: var(--dust); }
   .card .note.new { color: var(--signal); }
+  .card .row-btns { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
   .card .portrait { font-size: 0.8rem; color: var(--crystal); }
 
   button {
@@ -276,7 +277,10 @@
           <i style="--c:#c3a6ff"></i><b>慢動作</b><span>5 秒內整個世界變慢</span>
           <i style="--c:#ffd27a"></i><b>縮小</b><span>7 秒內機身變小，容易鑽過縫隙</span>
         </div>
-        <button id="startBtn" type="button">起飛</button>
+        <div class="row-btns">
+          <button id="startBtn" type="button">起飛</button>
+          <button id="demoBtn" type="button" class="ghost">觀看示範</button>
+        </div>
         <p class="portrait" id="portraitTip" hidden>把手機橫放，可以看到更遠的地形</p>
       </div>
       <section class="board" aria-label="線上排行榜"></section>
@@ -646,15 +650,18 @@
     }
   });
 
-  function startGame() {
+  // kind 傳 'demo' 時是自動駕駛示範；按鈕點擊會傳入事件物件，視為一般開局
+  function startGame(kind) {
+    const demo = kind === 'demo';
     initAudio();
     if (audio && audio.state === 'suspended') audio.resume();
     rotorStart();
-    // 通知伺服器開了一局（遊玩次數 +1）；連不上也不影響遊戲
     runId = null;
     myEntry = null;
-    api('/runs', {}).then(r => { runId = r.run_id; online.plays = r.plays; }).catch(() => {});
+    // 通知伺服器開了一局（遊玩次數 +1）；示範不算，連不上也不影響遊戲
+    if (!demo) api('/runs', {}).then(r => { runId = r.run_id; online.plays = r.plays; }).catch(() => {});
     newGame();
+    G.demo = demo;
     holding = false;
     G.banner = { zone: 0, life: 2.2 };
     setMode('play');
@@ -679,6 +686,16 @@
     }
     crashSound();
     const d = meters();
+    if (G.demo) {
+      ui.finalDist.textContent = d.toLocaleString();
+      ui.finalNote.textContent = '示範飛行不列入紀錄';
+      ui.finalNote.classList.remove('new');
+      ui.overTitle.textContent = `示範墜毀於第 ${G.zone + 1} 區・${sceneOf(G.zone).name}`;
+      entryForm.hidden = true;
+      overAt = performance.now();
+      setTimeout(() => { if (G && G.dead && mode === 'play') setMode('over'); updateHud(); }, 700);
+      return;
+    }
     const isNew = d > best;
     if (isNew) { best = d; saveBest(best); }
     ui.finalDist.textContent = d.toLocaleString();
@@ -698,6 +715,57 @@
     overAt = performance.now();
     // 先讓爆炸播一下，再跳出結算畫面
     setTimeout(() => { if (G && G.dead && mode === 'play') setMode('over'); updateHud(); }, 700);
+  }
+
+  // ===== 自動駕駛（示範模式）=====
+  // 把未來切成 AP_DEPTH 段、每段 AP_SEG_FRAMES 幀，每段選「按住」或「放開」，
+  // 把所有組合（2^7 = 128 種）都用遊戲的物理模擬一遍，挑最安全的路線，執行第一段的動作。
+  // 每一幀都重新規劃一次，所以就算實際幀率不穩也能修正。
+  const AP_SEG_FRAMES = 10, AP_DEPTH = 7, AP_DT = 1 / 60;
+
+  // 直升機在 (x, y) 時離最近的岩壁或岩柱還有多遠；負數代表撞到了
+  function apClearance(x, y, k) {
+    const L = x - 17 * k, R = x + 15 * k, T = y - 8 * k, B = y + 10 * k;
+    const s0 = G.segs[0];
+    let c = 60;
+    if (s0) {
+      // 和實際碰撞判定一樣：檢查和機身左右範圍有重疊的每一段地形
+      const i0 = Math.max(0, Math.ceil((L - SEG - s0.x) / SEG)), i1 = Math.min(G.segs.length - 1, Math.floor((R - s0.x) / SEG));
+      for (let i = i0; i <= i1; i++) { const s = G.segs[i]; c = Math.min(c, T - s.top, s.bot - B); }
+    }
+    for (const b of G.blocks) {
+      if (b.x < R && b.x + b.w > L) c = Math.min(c, Math.max(b.y - B, T - (b.y + b.h)));
+    }
+    return c;
+  }
+
+  function apScore(mask) {
+    let cam = G.cam, y = G.y, vy = G.vy, score = 0;
+    const k = G.mini > 0 ? MINI_SIZE : 1;
+    const dt = AP_DT * (G.slow > 0 ? SLOW_FACTOR : 1);
+    const hx = heliX();
+    for (let a = 0; a < AP_DEPTH; a++) {
+      const hold = (mask >> a) & 1;
+      for (let f = 0; f < AP_SEG_FRAMES; f++) {
+        cam += (190 + Math.min(240, cam * 0.012)) * dt;
+        vy = clamp(vy + (hold ? GRAVITY - LIFT : GRAVITY) * dt, MAX_UP, MAX_DOWN);
+        y += vy * dt;
+        const c = apClearance(cam + hx, y, k);
+        // 會撞的路線分數極低；越晚才撞的越好（至少多爭取一點時間）
+        if (c < 0) return -1e6 + (a * AP_SEG_FRAMES + f) * 1000;
+        score += Math.min(c, 30);   // 離障礙越遠越好，但超過 30 就不再加分，避免只顧著躲在正中間
+      }
+    }
+    return score;
+  }
+
+  function autopilot() {
+    let bestMask = 0, bestScore = -Infinity;
+    for (let m = 0; m < (1 << AP_DEPTH); m++) {
+      const sc = apScore(m);
+      if (sc > bestScore) { bestScore = sc; bestMask = m; }
+    }
+    return (bestMask & 1) === 1;
   }
 
   // 吃到道具
@@ -769,6 +837,11 @@
       if (amb === 'snow') G.ambient.push({ kind: amb, x, y: rand(-10, VH * 0.4), vx: rand(-25, 0), vy: rand(18, 40), r: rand(1, 2.2), life: 7, max: 7 });
       if (amb === 'ember') G.ambient.push({ kind: amb, x, y: rand(VH * 0.55, VH), vx: rand(-10, 10), vy: rand(-60, -25), r: rand(1, 2), life: 3.5, max: 3.5 });
       if (amb === 'spore') G.ambient.push({ kind: amb, x, y: rand(20, VH - 20), vx: rand(-8, 8), vy: rand(-8, 8), r: rand(1.2, 2.4), life: rand(3, 6), max: 6, color: sceneColor(x, 'crystal') });
+    }
+
+    if (G.demo) {
+      const h = autopilot();
+      if (h !== holding) { holding = h; rotorUpdate(); }
     }
 
     // 按住 → 往上推；放開 → 重力往下
@@ -1070,6 +1143,14 @@
     ctx.globalAlpha = 1;
 
     drawBanner();
+    if (G.demo && !G.dead) {
+      ctx.save();
+      ctx.font = '500 12px "Noto Sans TC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(239,230,218,0.75)';
+      ctx.fillText('自動駕駛示範中・點畫面或按任意鍵結束', VW / 2, VH - 10);
+      ctx.restore();
+    }
 
     // 慢動作時畫面蒙上一層淡紫
     if (G.slow > 0) {
@@ -1087,7 +1168,7 @@
     // 速度換算成看起來合理的 km/h：單位/秒 → 公尺/秒 → 公里/時
     const kmh = G.dead ? 0 : Math.round(G.speed / PX_PER_M * 3.6 * 4);
     setHtml(ui.speed, 'speed', `${kmh}<small>km/h</small>`);
-    setHtml(ui.best, 'best', `${Math.max(best, meters()).toLocaleString()}<small>m</small>`);
+    setHtml(ui.best, 'best', `${Math.max(best, G.demo ? 0 : meters()).toLocaleString()}<small>m</small>`);
 
     // 生效中的道具：顯示名稱與剩餘秒數
     const chips = [];
@@ -1118,6 +1199,10 @@
       if (mode === 'over' && performance.now() - overAt < 900) return;
       if (e && e.target && e.target.tagName === 'BUTTON') return;
       startGame();
+    }
+    if (mode === 'play' && G.demo) {
+      if (!G.dead) { G = null; holding = false; setMode('title'); }
+      return;
     }
     if (mode === 'play') { holding = true; rotorUpdate(); }
   }
@@ -1152,6 +1237,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden && mode === 'play' && !G.dead) setMode('pause'); });
 
   $('startBtn').addEventListener('click', startGame);
+  $('demoBtn').addEventListener('click', () => startGame('demo'));
   $('againBtn').addEventListener('click', startGame);
   $('resumeBtn').addEventListener('click', togglePause);
   ui.pauseBtn.addEventListener('click', togglePause);
