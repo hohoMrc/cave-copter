@@ -9,6 +9,7 @@
 """
 
 import json
+import math
 import os
 import secrets
 import sqlite3
@@ -24,9 +25,23 @@ ALLOWED_ORIGINS = {
 }
 TOP_N = 10
 NAME_MAX = 12
-# 遊戲最高速度約 430 單位/秒 ÷ 12 單位/公尺 ≈ 36 m/s，給一點寬容
-MAX_METERS_PER_SEC = 40
+RUN_TTL = 15 * 60     # 一局開始後多久內要上傳成績（秒）
 RUNS_PER_MINUTE = 20  # 每個 IP 每分鐘最多開幾局
+
+
+def min_flight_seconds(meters: int) -> float:
+    """飛到這個距離最少需要幾秒。
+
+    和 index.html 的加速規則一致：速度 = 190 + 0.012 × 已飛距離（單位），上限 430。
+    速度跟距離成正比，所以距離是指數成長：s(t) = 190/0.012 × (e^(0.012t) − 1)。
+    慢動作只會讓時間變長，所以這是理論最短時間。
+    """
+    units = meters * 12          # 每公尺 12 單位
+    cap = 240 / 0.012            # 飛到 20000 單位時速度到達上限 430
+    if units <= cap:
+        return math.log(1 + units * 0.012 / 190) / 0.012
+    return math.log(1 + cap * 0.012 / 190) / 0.012 + (units - cap) / 430
+
 
 db_lock = threading.Lock()
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -42,6 +57,10 @@ db.executescript("""
     );
     CREATE INDEX IF NOT EXISTS scores_distance ON scores (distance DESC);
 """)
+# 舊版資料表沒有 ip 欄位，補上（記錄是誰開的局）
+if "ip" not in [c[1] for c in db.execute("PRAGMA table_info(runs)")]:
+    db.execute("ALTER TABLE runs ADD COLUMN ip TEXT")
+    db.commit()
 
 # 簡單的記憶體內限流：{ip: [時間戳記...]}
 recent_runs: dict[str, list[float]] = {}
@@ -137,9 +156,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(429, {"error": "開局太頻繁，請稍後再試"})
         run_id = secrets.token_urlsafe(16)
         now = time.time()
+        ip = self.client_ip()
         with db_lock, db:
             db.execute("UPDATE counter SET plays = plays + 1 WHERE id = 1")
-            db.execute("INSERT INTO runs (id, started) VALUES (?, ?)", (run_id, now))
+            # 同一個 IP 開新的一局，之前沒上傳的局就作廢，避免先開好幾局囤起來
+            db.execute("UPDATE runs SET used = 1 WHERE ip = ? AND used = 0", (ip,))
+            db.execute("INSERT INTO runs (id, started, ip) VALUES (?, ?, ?)", (run_id, now, ip))
             # 順便清掉一天前的舊紀錄，資料表不會一直長大
             db.execute("DELETE FROM runs WHERE started < ?", (now - 86400,))
             plays = db.execute("SELECT plays FROM counter WHERE id = 1").fetchone()[0]
@@ -157,8 +179,12 @@ class Handler(BaseHTTPRequestHandler):
             row = db.execute("SELECT started, used FROM runs WHERE id = ?", (run_id,)).fetchone()
             if not row or row[1]:
                 return self.send_json(400, {"error": "這局已經上傳過，或已經過期"})
-            # 防作弊：這段時間內不可能飛得比最高速度還遠
-            if distance > (now - row[0]) * MAX_METERS_PER_SEC + 20:
+            elapsed = now - row[0]
+            if elapsed > RUN_TTL:
+                return self.send_json(400, {"error": "這局已經上傳過，或已經過期"})
+            # 防作弊：開局到上傳的時間，必須夠飛到這個距離（留 1.5 秒給網路延遲）
+            if elapsed + 1.5 < min_flight_seconds(distance):
+                print(f"{self.client_ip()} REJECT distance={distance} elapsed={elapsed:.1f}s need={min_flight_seconds(distance):.1f}s", flush=True)
                 return self.send_json(400, {"error": "距離不合理"})
             db.execute("UPDATE runs SET used = 1 WHERE id = ?", (run_id,))
             db.execute("INSERT INTO scores (name, distance, created) VALUES (?, ?, ?)", (name, distance, now))
