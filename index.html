@@ -81,6 +81,7 @@
     font-size: 1.25rem;
     font-variant-numeric: tabular-nums;
     line-height: 1.1;
+    min-width: 6ch;   /* 數字變長時寬度不變，避免整排數據換行跳動 */
   }
   .gauge b small { font-size: 0.7em; color: var(--dust); margin-left: 2px; }
   .gauge.best b { color: var(--signal); }
@@ -242,7 +243,8 @@
 
   @media (max-width: 560px) {
     h1 { font-size: 1.25rem; }
-    .gauge { padding: 4px 9px; }
+    .gauges { flex: 1 1 100%; flex-wrap: nowrap; }   /* 手機上數據固定自己一行，不跟標題擠同一行 */
+    .gauge { flex: 1; padding: 4px 9px; }
     .gauge b { font-size: 1rem; }
     .card h2 { font-size: 1.7rem; }
     .card .readout { font-size: 2.6rem; }
