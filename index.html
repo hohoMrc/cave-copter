@@ -572,7 +572,7 @@
   }
 
   // ===== 線上排行榜（後端在 EC2：server/game_api.py）=====
-  const API = 'https://hoho-game.duckdns.org/game-api';
+  const API = 'https://api.holin.cc/game-api';
   let online = { ok: false, loading: true, plays: null, top: [] };
   let runId = null;               // 這一局在伺服器上的編號，上傳成績時用
   let myEntry = null;             // 剛上榜的那筆，在榜上標示出來

@@ -1,7 +1,7 @@
 """穿岩直升機的排行榜 API。
 
 只用 Python 內建模組（http.server + sqlite3），不需要安裝套件，記憶體用量很小。
-放在 Caddy 後面，對外路徑是 https://hoho-stock.duckdns.org/game-api/
+放在 Caddy 後面，對外路徑是 https://api.holin.cc/game-api/
 
   POST /runs     開始一局：遊玩次數 +1，回傳這局的 run_id
   GET  /stats    遊玩次數與前 10 名

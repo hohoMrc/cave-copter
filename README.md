@@ -49,7 +49,7 @@ open index.html
 
 - `server/game_api.py`：API（遊玩次數、前 10 名、上傳成績與基本防作弊）
 - `server/game-api.service`：systemd 設定（port 8002，記憶體上限 64MB）
-- 對外網址：`https://hoho-game.duckdns.org/game-api/`（Caddy 反向代理）
+- 對外網址：`https://api.holin.cc/game-api/`（Caddy 反向代理；舊網址 `https://hoho-game.duckdns.org/game-api/` 仍可用）
 
 更新後端：
 
