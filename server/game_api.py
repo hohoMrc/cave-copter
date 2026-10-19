@@ -21,6 +21,7 @@ PORT = int(os.environ.get("PORT", "8002"))
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.db"))
 ALLOWED_ORIGINS = {
     "https://hohomrc.github.io",
+    "https://game.holin.cc",  # 自訂網域
     "http://localhost:8080",  # 本機測試用
 }
 TOP_N = 10
